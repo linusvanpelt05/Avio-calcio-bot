@@ -205,5 +205,11 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(callback_dettaglio_settimana, pattern="^settimana_\\d+$"))
     app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
 
-    print("✅ Bot avviato.")
-    app.run_polling()
+    print("✅ Bot avviato con webhook.")
+app.run_webhook(
+    listen="0.0.0.0",
+    port=8080,
+    url_path=TOKEN,
+    webhook_url=f"https://avio-calcio-bot.onrender.com/{TOKEN}"
+)
+
