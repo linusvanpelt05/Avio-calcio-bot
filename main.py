@@ -1,4 +1,4 @@
-import imghdr_pure as imghdr
+
 import logging
 import os
 import json
