@@ -1,14 +1,15 @@
 
 import logging
-import keep_alive
-keep_alive.keep_alive()
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-import json
 import os
-from dotenv import load_dotenv
+import json
 from datetime import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+)
+from dotenv import load_dotenv
 
+# Carica variabili ambiente
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -21,8 +22,7 @@ RPE_FILE = "rpe.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Utility
-
+# Utilità
 def load_json(filename):
     if not os.path.exists(filename):
         return {}
@@ -56,17 +56,16 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
         data[settimana] = {"km": 0.0, "ore": "00:00"}
 
     data[settimana]["km"] += km
-
     old_h, old_m = map(int, data[settimana]["ore"].split(":"))
     total_minutes = (old_h + h) * 60 + (old_m + m)
     new_h = total_minutes // 60
     new_m = total_minutes % 60
     data[settimana]["ore"] = f"{new_h:02}:{new_m:02}"
-
     save_json(SETTIMANE_FILE, data)
+
     await update.message.reply_text(f"Aggiornata settimana {settimana}: +{km} km, +{h:02}:{m:02} ore")
 
-# /allenamento_oggi manda tastiera RPE nel gruppo
+# /allenamento_oggi
 async def allenamento_oggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -104,7 +103,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Callback: Resoconto completo per admin
+# Callback: Resoconto completo
 async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -121,7 +120,7 @@ async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(msg, parse_mode="Markdown")
 
-# Callback: Resoconto privato per utenti
+# Callback: Resoconto privato
 async def callback_resoconto_privato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -178,21 +177,20 @@ Km totali: {valori['km']:.1f}
 Ore totali: {valori['ore']}"""
     await query.edit_message_text(msg, parse_mode="Markdown")
 
-# Callback: Risposta RPE - solo invio privato a admin
+# Callback: RPE
 async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user.first_name
     rpe_val = query.data.replace("rpe_", "")
     await query.answer("RPE registrato. Grazie!", show_alert=True)
 
-    # Invia messaggio solo all'admin
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"💬 {user} ha selezionato RPE: *{rpe_val}*",
         parse_mode="Markdown"
     )
 
-# Avvio bot
+# Avvio bot con Webhook
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -206,10 +204,11 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
 
     print("✅ Bot avviato con webhook.")
-app.run_webhook(
-    listen="0.0.0.0",
-    port=8080,
-    url_path=TOKEN,
-    webhook_url=f"https://avio-calcio-bot.onrender.com/{TOKEN}"
-)
+
+    # INSERISCI QUI IL TUO URL REALE DI RENDER
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=8080,
+        webhook_url="https://avio-calcio-bot.onrender.com"
+    )
 
