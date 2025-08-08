@@ -1,13 +1,13 @@
+from keep_alive import keep_alive
+keep_alive()
 import logging
-import os
-import asyncio
-from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
-from dotenv import load_dotenv
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 import json
+import os
+from dotenv import load_dotenv
+from datetime import datetime
 
-# Carica variabili ambiente
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -20,7 +20,8 @@ RPE_FILE = "rpe.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Funzioni utility
+# Utility
+
 def load_json(filename):
     if not os.path.exists(filename):
         return {}
@@ -30,8 +31,6 @@ def load_json(filename):
 def save_json(filename, data):
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
-
-# --- HANDLER COMANDI ---
 
 # /aggiorna_settimana
 async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -58,7 +57,7 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data[settimana]["km"] += km
 
     old_h, old_m = map(int, data[settimana]["ore"].split(":"))
-    total_minutes = (old_h * 60 + old_m) + (h * 60 + m)
+    total_minutes = (old_h + h) * 60 + (old_m + m)
     new_h = total_minutes // 60
     new_m = total_minutes % 60
     data[settimana]["ore"] = f"{new_h:02}:{new_m:02}"
@@ -66,7 +65,7 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_json(SETTIMANE_FILE, data)
     await update.message.reply_text(f"Aggiornata settimana {settimana}: +{km} km, +{h:02}:{m:02} ore")
 
-# /allenamento_oggi
+# /allenamento_oggi manda tastiera RPE nel gruppo
 async def allenamento_oggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -104,7 +103,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Callback: Resoconto completo
+# Callback: Resoconto completo per admin
 async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -121,7 +120,7 @@ async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(msg, parse_mode="Markdown")
 
-# Callback: Resoconto privato
+# Callback: Resoconto privato per utenti
 async def callback_resoconto_privato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -178,68 +177,32 @@ Km totali: {valori['km']:.1f}
 Ore totali: {valori['ore']}"""
     await query.edit_message_text(msg, parse_mode="Markdown")
 
-# Callback: Risposta RPE
+# Callback: Risposta RPE - solo invio privato a admin
 async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user.first_name
     rpe_val = query.data.replace("rpe_", "")
     await query.answer("RPE registrato. Grazie!", show_alert=True)
 
+    # Invia messaggio solo all'admin
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"💬 {user} ha selezionato RPE: *{rpe_val}*",
         parse_mode="Markdown"
     )
 
-# --- WEBHOOK MODE ---
-flask_app = Flask(__name__)
-bot_app = Application.builder().token(TOKEN).build()
-
-# Aggiungi handler
-bot_app.add_handler(CommandHandler("start", start))
-bot_app.add_handler(CommandHandler("aggiorna_settimana", aggiorna_settimana))
-bot_app.add_handler(CommandHandler("allenamento_oggi", allenamento_oggi))
-bot_app.add_handler(CallbackQueryHandler(callback_resoconto, pattern="^resoconto$"))
-bot_app.add_handler(CallbackQueryHandler(callback_resoconto_privato, pattern="^resoconto_privato$"))
-bot_app.add_handler(CallbackQueryHandler(callback_settimane, pattern="^settimane$"))
-bot_app.add_handler(CallbackQueryHandler(callback_dettaglio_settimana, pattern="^settimana_\\d+$"))
-bot_app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
-
-@flask_app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    json_update = request.get_json(force=True)
-    update = Update.de_json(json_update, bot_app.bot)
-
-    # Usa il loop asyncio corrente per schedulare il task, senza bloccare Flask
-    loop = asyncio.get_event_loop()
-    loop.create_task(bot_app.process_update(update))
-
-    return "OK", 200
-
-@flask_app.route("/")
-def home():
-    return "Bot attivo", 200
-
+# Avvio bot
 if __name__ == "__main__":
-    import threading
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    async def setup_webhook():
-        bot = Bot(TOKEN)
-        await bot.delete_webhook()
-        await bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("aggiorna_settimana", aggiorna_settimana))
+    app.add_handler(CommandHandler("allenamento_oggi", allenamento_oggi))
+    app.add_handler(CallbackQueryHandler(callback_resoconto, pattern="^resoconto$"))
+    app.add_handler(CallbackQueryHandler(callback_resoconto_privato, pattern="^resoconto_privato$"))
+    app.add_handler(CallbackQueryHandler(callback_settimane, pattern="^settimane$"))
+    app.add_handler(CallbackQueryHandler(callback_dettaglio_settimana, pattern="^settimana_\\d+$"))
+    app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
 
-    async def run_bot():
-        await bot_app.initialize()
-        await setup_webhook()
-        await bot_app.start()
-        await bot_app.updater.start_polling()  # opzionale se vuoi polling
-
-    def run_flask():
-        flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
-
-    # Avvia Flask in thread separato
-    flask_thread = threading.Thread(target=run_flask)
-    flask_thread.start()
-
-    # Avvia loop asyncio per il bot
-    asyncio.run(run_bot())
+    print("✅ Bot avviato.")
+    app.run_polling()
