@@ -1,13 +1,11 @@
 
 import logging
 import os
-import json
-from datetime import datetime
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
+import json
 
 # Carica variabili ambiente
 load_dotenv()
@@ -22,7 +20,7 @@ RPE_FILE = "rpe.json"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Utilità
+# Funzioni utility
 def load_json(filename):
     if not os.path.exists(filename):
         return {}
@@ -32,6 +30,8 @@ def load_json(filename):
 def save_json(filename, data):
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
+
+# --- HANDLER COMANDI ---
 
 # /aggiorna_settimana
 async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -56,13 +56,14 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
         data[settimana] = {"km": 0.0, "ore": "00:00"}
 
     data[settimana]["km"] += km
+
     old_h, old_m = map(int, data[settimana]["ore"].split(":"))
     total_minutes = (old_h + h) * 60 + (old_m + m)
     new_h = total_minutes // 60
     new_m = total_minutes % 60
     data[settimana]["ore"] = f"{new_h:02}:{new_m:02}"
-    save_json(SETTIMANE_FILE, data)
 
+    save_json(SETTIMANE_FILE, data)
     await update.message.reply_text(f"Aggiornata settimana {settimana}: +{km} km, +{h:02}:{m:02} ore")
 
 # /allenamento_oggi
@@ -177,7 +178,7 @@ Km totali: {valori['km']:.1f}
 Ore totali: {valori['ore']}"""
     await query.edit_message_text(msg, parse_mode="Markdown")
 
-# Callback: RPE
+# Callback: Risposta RPE
 async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user.first_name
@@ -190,25 +191,36 @@ async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-# Avvio bot con Webhook
+# --- WEBHOOK MODE ---
+flask_app = Flask(__name__)
+bot_app = Application.builder().token(TOKEN).build()
+
+# Aggiungi handler
+bot_app.add_handler(CommandHandler("start", start))
+bot_app.add_handler(CommandHandler("aggiorna_settimana", aggiorna_settimana))
+bot_app.add_handler(CommandHandler("allenamento_oggi", allenamento_oggi))
+bot_app.add_handler(CallbackQueryHandler(callback_resoconto, pattern="^resoconto$"))
+bot_app.add_handler(CallbackQueryHandler(callback_resoconto_privato, pattern="^resoconto_privato$"))
+bot_app.add_handler(CallbackQueryHandler(callback_settimane, pattern="^settimane$"))
+bot_app.add_handler(CallbackQueryHandler(callback_dettaglio_settimana, pattern="^settimana_\\d+$"))
+bot_app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
+
+@flask_app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot_app.bot)
+    bot_app.update_queue.put_nowait(update)
+    return "OK", 200
+
+@flask_app.route("/")
+def home():
+    return "Bot attivo", 200
+
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
+    from telegram import Bot
+    bot = Bot(TOKEN)
+    bot.delete_webhook()
+    bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("aggiorna_settimana", aggiorna_settimana))
-    app.add_handler(CommandHandler("allenamento_oggi", allenamento_oggi))
-    app.add_handler(CallbackQueryHandler(callback_resoconto, pattern="^resoconto$"))
-    app.add_handler(CallbackQueryHandler(callback_resoconto_privato, pattern="^resoconto_privato$"))
-    app.add_handler(CallbackQueryHandler(callback_settimane, pattern="^settimane$"))
-    app.add_handler(CallbackQueryHandler(callback_dettaglio_settimana, pattern="^settimana_\\d+$"))
-    app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
-    print("✅ Bot avviato con webhook.")
-
-    # INSERISCI QUI IL TUO URL REALE DI RENDER
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=8080,
-        webhook_url="https://avio-calcio-bot.onrender.com"
-    )
 
