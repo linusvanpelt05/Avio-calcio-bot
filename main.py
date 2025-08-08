@@ -217,8 +217,9 @@ def webhook():
 def home():
     return "Bot attivo", 200
 
+import asyncio
+
 if __name__ == "__main__":
-    import asyncio
     from telegram import Bot
 
     async def setup_webhook():
@@ -226,9 +227,23 @@ if __name__ == "__main__":
         await bot.delete_webhook()
         await bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
 
-    asyncio.run(setup_webhook())
+    async def run():
+        await setup_webhook()
+        # Avvia il bot async handler che gestisce update_queue
+        # Deve girare in background e Flask deve girare nello stesso processo
+        task = asyncio.create_task(bot_app.start())
+        # Avvia Flask nel thread separato perché Flask è sincrono
+        import threading
 
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+        def run_flask():
+            flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.start()
+
+        await task  # aspetta il bot
+
+    asyncio.run(run())
 
 
 
