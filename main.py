@@ -216,10 +216,15 @@ def home():
     return "Bot attivo", 200
 
 if __name__ == "__main__":
+    import asyncio
     from telegram import Bot
-    bot = Bot(TOKEN)
-    bot.delete_webhook()
-    bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
+
+    async def setup_webhook():
+        bot = Bot(TOKEN)
+        await bot.delete_webhook()
+        await bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
+
+    asyncio.run(setup_webhook())
 
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
