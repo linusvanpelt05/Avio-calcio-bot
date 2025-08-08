@@ -1,8 +1,8 @@
-
 import logging
 import os
+import asyncio
 from flask import Flask, request
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 import json
@@ -58,7 +58,7 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
     data[settimana]["km"] += km
 
     old_h, old_m = map(int, data[settimana]["ore"].split(":"))
-    total_minutes = (old_h + h) * 60 + (old_m + m)
+    total_minutes = (old_h * 60 + old_m) + (h * 60 + m)
     new_h = total_minutes // 60
     new_m = total_minutes % 60
     data[settimana]["ore"] = f"{new_h:02}:{new_m:02}"
@@ -207,8 +207,10 @@ bot_app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
 
 @flask_app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot_app.bot)
-    bot_app.update_queue.put_nowait(update)
+    json_update = request.get_json(force=True)
+    update = Update.de_json(json_update, bot_app.bot)
+    # Usa asyncio per processare la coroutine correttamente
+    asyncio.run(bot_app.process_update(update))
     return "OK", 200
 
 @flask_app.route("/")
@@ -227,5 +229,8 @@ if __name__ == "__main__":
     asyncio.run(setup_webhook())
 
     flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+
+
 
 
