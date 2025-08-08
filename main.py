@@ -1,7 +1,6 @@
 import logging
 import os
 import asyncio
-import threading
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -16,11 +15,12 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 SETTIMANE_FILE = "settimane.json"
+RPE_FILE = "rpe.json"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Utility JSON
+# Funzioni utility
 def load_json(filename):
     if not os.path.exists(filename):
         return {}
@@ -33,6 +33,7 @@ def save_json(filename, data):
 
 # --- HANDLER COMANDI ---
 
+# /aggiorna_settimana
 async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -65,6 +66,7 @@ async def aggiorna_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE)
     save_json(SETTIMANE_FILE, data)
     await update.message.reply_text(f"Aggiornata settimana {settimana}: +{km} km, +{h:02}:{m:02} ore")
 
+# /allenamento_oggi
 async def allenamento_oggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -80,6 +82,7 @@ async def allenamento_oggi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text("Allenamento del giorno inviato al canale.")
 
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     bot_username = (await context.bot.get_me()).username
@@ -101,6 +104,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
+# Callback: Resoconto completo
 async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -117,6 +121,7 @@ async def callback_resoconto(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     await query.edit_message_text(msg, parse_mode="Markdown")
 
+# Callback: Resoconto privato
 async def callback_resoconto_privato(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -142,6 +147,7 @@ async def callback_resoconto_privato(update: Update, context: ContextTypes.DEFAU
             parse_mode="Markdown"
         )
 
+# Callback: Mostra settimane
 async def callback_settimane(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -155,6 +161,7 @@ async def callback_settimane(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text("📅 Seleziona una settimana:", reply_markup=reply_markup)
 
+# Callback: Dettaglio settimana
 async def callback_dettaglio_settimana(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -171,6 +178,7 @@ Km totali: {valori['km']:.1f}
 Ore totali: {valori['ore']}"""
     await query.edit_message_text(msg, parse_mode="Markdown")
 
+# Callback: Risposta RPE
 async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user.first_name
@@ -184,7 +192,6 @@ async def callback_rpe(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # --- WEBHOOK MODE ---
-
 flask_app = Flask(__name__)
 bot_app = Application.builder().token(TOKEN).build()
 
@@ -202,30 +209,37 @@ bot_app.add_handler(CallbackQueryHandler(callback_rpe, pattern="^rpe_\\d+$"))
 def webhook():
     json_update = request.get_json(force=True)
     update = Update.de_json(json_update, bot_app.bot)
-    # Metti l'update nella coda (NO asyncio.run())
-    bot_app.update_queue.put_nowait(update)
+
+    # Usa il loop asyncio corrente per schedulare il task, senza bloccare Flask
+    loop = asyncio.get_event_loop()
+    loop.create_task(bot_app.process_update(update))
+
     return "OK", 200
 
 @flask_app.route("/")
 def home():
     return "Bot attivo", 200
 
-async def setup_webhook():
-    bot = Bot(TOKEN)
-    await bot.delete_webhook()
-    await bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
+if __name__ == "__main__":
+    import threading
 
-async def main():
-    await bot_app.initialize()
-    await setup_webhook()
-    await bot_app.start()
+    async def setup_webhook():
+        bot = Bot(TOKEN)
+        await bot.delete_webhook()
+        await bot.set_webhook(url=f"https://avio-calcio-bot.onrender.com/{TOKEN}")
 
-    # Avvia Flask in un thread separato perché è sincrono
-    flask_thread = threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080))))
+    async def run_bot():
+        await bot_app.initialize()
+        await setup_webhook()
+        await bot_app.start()
+        await bot_app.updater.start_polling()  # opzionale se vuoi polling
+
+    def run_flask():
+        flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+    # Avvia Flask in thread separato
+    flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
 
-    await bot_app.wait_closed()
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
+    # Avvia loop asyncio per il bot
+    asyncio.run(run_bot())
